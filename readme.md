@@ -37,9 +37,15 @@ _Diagram to be added once all phases are complete._
 - `terraform apply` — 9 resources provisioned, 0 errors
 - kubectl connected, both nodes `Ready`
 
-### 🔧 Phase 2 — FastAPI app + Docker + Artifact Registry _(next)_
+### ✅ Phase 2 — FastAPI app + Docker + Artifact Registry
+- FastAPI app with 4 endpoints: `/` (service info), `/health` (k8s probe target), `/items` (sample data), `/secret` (Vault placeholder)
+- Dockerfile using `python:3.12-slim` — dependencies copied before source code to maximize Docker layer caching
+- Artifact Registry repository (`app-repo`) provisioned via Terraform
+- Image built and pushed: `us-central1-docker.pkg.dev/gcp-gke-pipeline-ehab/app-repo/fastapi-app:latest`
 
-### Phase 3 — Kubernetes manifests + deploy to GKE
+### 🔧 Phase 3 — Kubernetes manifests + deploy to GKE _(next)_
+
+### Phase 4 — GitHub Actions CI/CD
 ### Phase 3 — Kubernetes manifests + deploy to GKE
 ### Phase 4 — GitHub Actions CI/CD
 ### Phase 5 — HashiCorp Vault via Helm

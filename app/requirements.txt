@@ -1,0 +1,6 @@
+# FastAPI — the web framework
+fastapi==0.111.0
+
+# Uvicorn — the ASGI server that runs FastAPI
+# [standard] includes extras like websockets and the fast C-based event loop
+uvicorn[standard]==0.30.1
