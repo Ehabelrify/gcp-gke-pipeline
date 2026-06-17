@@ -43,9 +43,14 @@ _Diagram to be added once all phases are complete._
 - Artifact Registry repository (`app-repo`) provisioned via Terraform
 - Image built and pushed: `us-central1-docker.pkg.dev/gcp-gke-pipeline-ehab/app-repo/fastapi-app:latest`
 
-### 🔧 Phase 3 — Kubernetes manifests + deploy to GKE _(next)_
+### ✅ Phase 3 — Kubernetes manifests + deploy to GKE
+- `Deployment` with 2 replicas, resource requests/limits sized for e2-small nodes (100m CPU / 128Mi RAM per pod)
+- Liveness probe on `/health` — restarts the pod if the app deadlocks
+- Readiness probe on `/health` — removes the pod from load balancer rotation until it's ready
+- `Service` of type `LoadBalancer` — GCP external load balancer on port 80 → container port 8000
+- App live and responding: `GET /health → {"status": "healthy"}`
 
-### Phase 4 — GitHub Actions CI/CD
+### 🔧 Phase 4 — GitHub Actions CI/CD _(next)_
 ### Phase 3 — Kubernetes manifests + deploy to GKE
 ### Phase 4 — GitHub Actions CI/CD
 ### Phase 5 — HashiCorp Vault via Helm

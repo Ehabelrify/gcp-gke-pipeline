@@ -1,0 +1,68 @@
+# ── deployment.yaml ───────────────────────────────────────────────────────────
+# A Deployment tells Kubernetes to keep N identical copies (replicas) of our
+# pod running at all times. If a pod crashes, the Deployment controller
+# automatically replaces it.
+
+apiVersion: apps/v1       # the API group that owns the Deployment resource
+kind: Deployment          # resource type
+metadata:
+  name: fastapi-app       # name used by kubectl to reference this Deployment
+  labels:
+    app: fastapi-app      # arbitrary label — used by the Service selector to find these pods
+
+spec:
+  replicas: 2             # run 2 pods so the app survives a single node failure
+
+  # selector tells the Deployment which pods it "owns" and should manage
+  selector:
+    matchLabels:
+      app: fastapi-app    # must match the labels in the pod template below
+
+  template:               # pod template — every pod the Deployment creates looks like this
+    metadata:
+      labels:
+        app: fastapi-app  # must match selector.matchLabels above
+
+    spec:
+      containers:
+        - name: fastapi-app
+          # Image we pushed to Artifact Registry in Phase 2.
+          # In Phase 4 (CI/CD), GitHub Actions will replace :latest with a git SHA tag.
+          image: us-central1-docker.pkg.dev/gcp-gke-pipeline-ehab/app-repo/fastapi-app:latest
+
+          # Always pull the image on pod start — ensures new pushes are picked up.
+          # For production you'd pin to a SHA; for a demo :latest with Always is fine.
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8000   # the port uvicorn listens on inside the container
+
+          # Resource requests: the minimum CPU/RAM Kubernetes reserves for this pod.
+          # Resource limits: the hard ceiling — the pod is killed if it exceeds memory.
+          # Kept small to fit comfortably on e2-small nodes (2 GB RAM each).
+          resources:
+            requests:
+              cpu: "100m"       # 100 millicores = 0.1 vCPU
+              memory: "128Mi"   # 128 mebibytes
+            limits:
+              cpu: "200m"       # burst up to 0.2 vCPU
+              memory: "256Mi"   # hard cap — OOMKill if exceeded
+
+          # Liveness probe: if this fails repeatedly, Kubernetes restarts the pod.
+          # Catches cases where the app is running but in a broken/deadlocked state.
+          livenessProbe:
+            httpGet:
+              path: /health     # our health endpoint in main.py
+              port: 8000
+            initialDelaySeconds: 10   # wait 10s after start before first check
+            periodSeconds: 15         # check every 15s
+
+          # Readiness probe: if this fails, Kubernetes removes the pod from the
+          # Service load balancer — traffic stops going to it until it recovers.
+          # Prevents requests hitting a pod that's still starting up.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5    # readiness check can start sooner than liveness
+            periodSeconds: 10

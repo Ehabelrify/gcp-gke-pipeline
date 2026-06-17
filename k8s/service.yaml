@@ -1,0 +1,28 @@
+# ── service.yaml ──────────────────────────────────────────────────────────────
+# A Service gives the Deployment a stable network identity and exposes it.
+# Without a Service, pods are only reachable by their internal cluster IPs,
+# which change every time a pod restarts.
+
+apiVersion: v1            # core API group — no prefix needed for v1 resources
+kind: Service
+metadata:
+  name: fastapi-app-svc   # name used by kubectl and other services to reach this
+
+spec:
+  # LoadBalancer type tells GKE to provision a GCP external HTTP load balancer
+  # and assign it a public IP address. This is what makes the app reachable
+  # from the internet.
+  # Cost note: GCP charges ~$0.025/hour (~$18/month) for the load balancer.
+  # Tear it down (kubectl delete svc or terraform destroy) after demoing.
+  type: LoadBalancer
+
+  # selector matches pods by label — this Service routes traffic to any pod
+  # with label app=fastapi-app, which matches our Deployment's pod template.
+  selector:
+    app: fastapi-app
+
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80          # the port the load balancer listens on (public-facing)
+      targetPort: 8000  # the port on the pod to forward traffic to (uvicorn)
