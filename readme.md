@@ -84,8 +84,17 @@ _Diagram to be added once all phases are complete._
 
 ---
 
-### Phase 5 — HashiCorp Vault via Helm
-### Phase 6 — Observability (Prometheus + Grafana)
+### ✅ Phase 5 — HashiCorp Vault via Helm
+- Vault deployed in dev mode via Helm into a dedicated `vault` namespace (auto-unsealed, in-memory storage — correct scope for a portfolio project; production would use Raft storage + GCP KMS auto-unseal)
+- Secret written: `vault kv put secret/app db_password=supersecret`
+- FastAPI `/secret` endpoint updated to read `db_password` from Vault KV v2 engine via the `hvac` Python client
+- `VAULT_ADDR` and `VAULT_TOKEN` injected as env vars in the Deployment manifest; app resolves Vault via Kubernetes internal DNS (`vault.vault.svc.cluster.local`)
+
+**Issues encountered:** None.
+
+---
+
+### 🔧 Phase 6 — Observability (Prometheus + Grafana) _(next)_
 ### Phase 7 — Final README + architecture diagram
 
 ## Setup

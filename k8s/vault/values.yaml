@@ -1,0 +1,29 @@
+# ── vault/values.yaml ─────────────────────────────────────────────────────────
+# Helm values for the HashiCorp Vault chart.
+# We run Vault in dev mode — a single-pod, in-memory, auto-unsealed instance.
+#
+# Dev mode trade-offs (documented intentionally):
+#   ✓ Zero config — no TLS setup, no unseal keys, no storage backend needed
+#   ✓ Correct for a portfolio project where we want to demo secret injection
+#   ✗ Not persistent — secrets are lost if the pod restarts
+#   ✗ Not HA — single pod, no Raft cluster
+# In production you would use integrated Raft storage, auto-unseal via GCP KMS,
+# and TLS termination. Those are out of scope here.
+
+server:
+  dev:
+    enabled: true         # run in dev mode (auto-unsealed, in-memory)
+    devRootToken: "root"  # the root token used to authenticate — fine for dev mode
+
+  # Resource limits sized for e2-small nodes
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+# Enable the Vault web UI — accessible via kubectl port-forward for demo purposes
+ui:
+  enabled: true

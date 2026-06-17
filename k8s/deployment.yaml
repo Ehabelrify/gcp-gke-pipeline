@@ -49,6 +49,18 @@ spec:
           ports:
             - containerPort: 8000   # the port uvicorn listens on inside the container
 
+          env:
+            # Vault address — uses Kubernetes internal DNS to reach the Vault pod.
+            # Format: <service>.<namespace>.svc.cluster.local
+            # "vault" is the Helm release name, "vault" is the namespace we install into.
+            - name: VAULT_ADDR
+              value: "http://vault.vault.svc.cluster.local:8200"
+            # Root token for Vault dev mode — acceptable for a portfolio demo.
+            # In production this would be a short-lived token from Vault Agent,
+            # or a Kubernetes auth role, never a static value in the manifest.
+            - name: VAULT_TOKEN
+              value: "root"
+
           # Resource requests: the minimum CPU/RAM Kubernetes reserves for this pod.
           # Resource limits: the hard ceiling — the pod is killed if it exceeds memory.
           # Kept small to fit comfortably on e2-small nodes (2 GB RAM each).

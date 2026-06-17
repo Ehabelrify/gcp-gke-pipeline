@@ -4,3 +4,7 @@ fastapi==0.111.0
 # Uvicorn — the ASGI server that runs FastAPI
 # [standard] includes extras like websockets and the fast C-based event loop
 uvicorn[standard]==0.30.1
+
+# hvac — official HashiCorp Vault client for Python
+# Used to read secrets from the Vault KV v2 secret engine
+hvac==2.3.0
