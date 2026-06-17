@@ -70,7 +70,7 @@ _Diagram to be added once all phases are complete._
 
 ---
 
-### 🔧 Phase 4 — GitHub Actions CI/CD _(in progress)_
+### ✅ Phase 4 — GitHub Actions CI/CD
 - Workload Identity Federation (WIF) configured — GitHub Actions authenticates to GCP via short-lived OIDC tokens, no JSON keys stored in GitHub Secrets
 - Dedicated CI/CD service account (`github-actions-sa`) with Artifact Registry writer + GKE developer roles
 - Pipeline: checkout → WIF auth → build image (tagged with git SHA) → push to Artifact Registry → rolling deploy to GKE
@@ -78,6 +78,9 @@ _Diagram to be added once all phases are complete._
 **Issues encountered:**
 - **Rolling update failed with `Insufficient cpu`** — Kubernetes default rolling update creates a new pod before terminating an old one (`maxSurge: 1`). With 2 replicas this temporarily requires 3 pods, but e2-small nodes didn't have enough free CPU to schedule the 3rd pod.
   - Fix: Set `maxSurge: 0, maxUnavailable: 1` in the Deployment strategy so old pods are terminated first. Also reduced CPU requests from 100m to 50m (FastAPI is lightweight and the headroom is needed for Vault and Prometheus in later phases).
+- **Strategy change not applied via `kubectl set image`** — the pipeline was using `kubectl set image` to update only the image tag, which left all other manifest changes (including the `maxSurge: 0` fix) unapplied on the live cluster.
+  - Fix: Replaced `kubectl set image` with `sed` to substitute the image tag in `deployment.yaml` followed by `kubectl apply -f k8s/` — this ensures every manifest change is applied on every deploy, not just the image tag.
+- **Node.js 20 deprecation warning in GitHub Actions** — actions (`checkout@v4`, `google-github-actions/auth@v2`, etc.) internally target Node.js 20, which GitHub has deprecated on runners. GitHub automatically forces them to run on Node.js 24. Non-breaking warning only — no action required.
 
 ---
 
