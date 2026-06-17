@@ -22,18 +22,33 @@ _Diagram to be added once all phases are complete._
 
 ## Phases
 
-- [x] Phase 0 — Local tooling & GCP project setup
-- [ ] Phase 1 — Terraform: VPC + GKE cluster
-- [ ] Phase 2 — FastAPI app + Docker + Artifact Registry
-- [ ] Phase 3 — Kubernetes manifests + deploy to GKE
-- [ ] Phase 4 — GitHub Actions CI/CD
-- [ ] Phase 5 — HashiCorp Vault via Helm
-- [ ] Phase 6 — Observability (Prometheus + Grafana)
-- [ ] Phase 7 — Final README + architecture diagram
+### ✅ Phase 0 — Local tooling & GCP project setup
+- Installed gcloud CLI, Terraform, Helm, kubectl on Windows 11
+- Authenticated with `gcloud auth login` and `gcloud auth application-default login`
+- Created GCP project `gcp-gke-pipeline-ehab`
+- Enabled APIs: Compute Engine, GKE, Artifact Registry
+- Configured Application Default Credentials for Terraform
+
+### ✅ Phase 1 — Terraform: VPC + GKE cluster
+- Custom VPC (`gke-vpc`) with a dedicated subnet and secondary IP ranges for pods and services (VPC-native networking)
+- GKE zonal cluster (`gke-pipeline-cluster`, `us-central1-a`) with 2x `e2-small` nodes running Kubernetes v1.35.5
+- Dedicated least-privilege service account (`gke-node-sa`) with only 4 IAM roles: Artifact Registry reader, log writer, metric writer, monitoring viewer
+- Workload Identity enabled on the cluster and node pool (no JSON keys needed for pod-level GCP auth)
+- `terraform apply` — 9 resources provisioned, 0 errors
+- kubectl connected, both nodes `Ready`
+
+### 🔧 Phase 2 — FastAPI app + Docker + Artifact Registry _(next)_
+
+### Phase 3 — Kubernetes manifests + deploy to GKE
+### Phase 3 — Kubernetes manifests + deploy to GKE
+### Phase 4 — GitHub Actions CI/CD
+### Phase 5 — HashiCorp Vault via Helm
+### Phase 6 — Observability (Prometheus + Grafana)
+### Phase 7 — Final README + architecture diagram
 
 ## Setup
 
-_Full setup instructions will be written phase by phase during the project completion._
+_Full setup instructions will be written in Phase 7 once the project is complete._
 
 ## Cost Note
 
