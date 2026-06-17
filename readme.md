@@ -257,6 +257,40 @@ A regional cluster runs three control planes across three zones, costing ~$72/mo
 
 ---
 
+## Screenshots
+
+**API — Swagger UI and live endpoints**
+
+| Swagger UI (`/docs`) | Health endpoint (`/health`) |
+|---|---|
+| ![Swagger UI](docs/screenshots/swagger-ui.png) | ![Health endpoint](docs/screenshots/health-endpoint.png) |
+
+**Vault secret injection — `/secret` reads live from HashiCorp Vault at runtime**
+
+![Vault secret](docs/screenshots/vault-secret.png)
+
+**CI/CD — GitHub Actions pipeline passing end-to-end**
+
+![GitHub Actions](docs/screenshots/github-actions.png)
+
+**Observability — Prometheus + Grafana cluster dashboard**
+
+| Cluster resource dashboard | Pod-level metrics |
+|---|---|
+| ![Grafana dashboard](docs/screenshots/grafana-dashboard.png) | ![Grafana pods](docs/screenshots/grafana-pods.png) |
+
+**GCP Console — GKE workloads and Artifact Registry**
+
+| GKE Workloads | Artifact Registry (image tags per git SHA) |
+|---|---|
+| ![GKE workloads](docs/screenshots/gcp-gke-workloads.png) | ![Artifact Registry](docs/screenshots/artifact-registry.png) |
+
+**GCP Cloud Monitoring — external uptime check**
+
+![Uptime check](docs/screenshots/uptime-check.png)
+
+---
+
 ## Teardown
 
 ```bash
@@ -275,8 +309,6 @@ cd terraform && terraform destroy
 | [`docs/build-journal.md`](docs/build-journal.md) | Phase-by-phase build log — what was built, commands run, and key decisions made |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | 11 issues with symptoms, root causes, debugging commands, and fixes |
 | [`docs/screenshots/`](docs/screenshots/README.md) | Screenshots of the running system — Grafana, Swagger UI, GCP Console, GitHub Actions |
-
----
 
 ## Troubleshooting
 

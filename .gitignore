@@ -30,6 +30,5 @@ build/
 # Docker
 .dockerignore
 
-# Local notes
-prompt.md
-plan.md
+# Teaching docs 
+docs/teaching/
