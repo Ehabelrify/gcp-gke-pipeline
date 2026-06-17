@@ -85,12 +85,17 @@ jobs:
       # ── 8. Deploy to GKE ──────────────────────────────────────────────────────
       - name: Deploy to GKE
         run: |
-          # Update the running Deployment to use the new image SHA.
-          # This triggers a rolling update — GKE replaces pods one at a time,
-          # so the app stays available during the deployment.
-          kubectl set image deployment/fastapi-app \
-            fastapi-app=${{ env.IMAGE }}:${{ github.sha }}
+          # Substitute the image tag placeholder in deployment.yaml with the
+          # exact git SHA built in this run, then apply the full manifest.
+          # Using apply (not set image) ensures ALL manifest changes — strategy,
+          # resource limits, probes — are also applied on every deploy, not just
+          # the image tag. sed replaces :latest with the immutable SHA in-place.
+          sed -i "s|fastapi-app:latest|fastapi-app:${{ github.sha }}|g" k8s/deployment.yaml
 
-          # Wait for the rollout to finish before marking the job as passed.
-          # If a pod fails to start, this command exits non-zero and fails the job.
+          # Apply all k8s manifests. kubectl apply is idempotent — resources that
+          # haven't changed are left untouched; only diffs are applied.
+          kubectl apply -f k8s/
+
+          # Wait for the rolling update to complete before marking the job green.
+          # If any pod fails readiness checks, this exits non-zero and fails the job.
           kubectl rollout status deployment/fastapi-app --timeout=300s
