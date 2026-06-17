@@ -1,0 +1,96 @@
+# ── deploy.yml ────────────────────────────────────────────────────────────────
+# CI/CD pipeline: on every push to master, build the Docker image, push it to
+# Artifact Registry, and roll it out to GKE.
+#
+# Authentication uses Workload Identity Federation — no JSON keys stored anywhere.
+# GitHub generates a short-lived OIDC token; GCP exchanges it for a GCP access
+# token scoped to the cicd SA. Token expires when the job ends.
+
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - master   # trigger on every push to master
+
+env:
+  PROJECT_ID: gcp-gke-pipeline-ehab
+  REGION: us-central1
+  CLUSTER_NAME: gke-pipeline-cluster
+  CLUSTER_ZONE: us-central1-a
+  # Base image URL — we append :SHA and :latest as separate tags below
+  IMAGE: us-central1-docker.pkg.dev/gcp-gke-pipeline-ehab/app-repo/fastapi-app
+
+jobs:
+  build-and-deploy:
+    name: Build, Push, Deploy
+    runs-on: ubuntu-latest   # GCP actions work best on ubuntu runners
+
+    permissions:
+      contents: read    # read the repo code
+      id-token: write   # REQUIRED for WIF — allows the job to request an OIDC token
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+        # github.sha is now available — we use it to tag the image uniquely
+
+      # ── 2. Authenticate to GCP via WIF ───────────────────────────────────────
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          # These secrets are set in GitHub → Settings → Secrets and variables → Actions
+          # Values come from `terraform output` after applying cicd.tf
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        # After this step, gcloud and docker are automatically authenticated
+        # using the short-lived token — no explicit login needed
+
+      # ── 3. Set up gcloud CLI ─────────────────────────────────────────────────
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin  # needed for kubectl → GKE auth
+
+      # ── 4. Configure Docker for Artifact Registry ─────────────────────────────
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+        # --quiet suppresses the "do you want to continue?" prompt
+
+      # ── 5. Build Docker image ─────────────────────────────────────────────────
+      - name: Build image
+        run: |
+          docker build \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE }}:latest \
+            .
+        # Tag with the git commit SHA for traceability (easy to roll back to any commit)
+        # Also tag :latest so the k8s manifest always pulls the newest image
+
+      # ── 6. Push to Artifact Registry ──────────────────────────────────────────
+      - name: Push image
+        run: |
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      # ── 7. Get GKE credentials ────────────────────────────────────────────────
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.CLUSTER_ZONE }}
+        # Writes a kubeconfig entry for the cluster so kubectl works in step 8
+
+      # ── 8. Deploy to GKE ──────────────────────────────────────────────────────
+      - name: Deploy to GKE
+        run: |
+          # Update the running Deployment to use the new image SHA.
+          # This triggers a rolling update — GKE replaces pods one at a time,
+          # so the app stays available during the deployment.
+          kubectl set image deployment/fastapi-app \
+            fastapi-app=${{ env.IMAGE }}:${{ github.sha }}
+
+          # Wait for the rollout to finish before marking the job as passed.
+          # If a pod fails to start, this command exits non-zero and fails the job.
+          kubectl rollout status deployment/fastapi-app --timeout=120s

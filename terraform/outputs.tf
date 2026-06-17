@@ -38,6 +38,16 @@ output "artifact_registry_url" {
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.app_repo.repository_id}"
 }
 
+output "workload_identity_provider" {
+  description = "Full WIF provider resource name — paste this as GCP_WORKLOAD_IDENTITY_PROVIDER in GitHub Secrets"
+  value       = google_iam_workload_identity_pool_provider.github_provider.name
+}
+
+output "cicd_service_account_email" {
+  description = "CI/CD SA email — paste this as GCP_SERVICE_ACCOUNT in GitHub Secrets"
+  value       = google_service_account.cicd_sa.email
+}
+
 # After apply, connect kubectl to the cluster with:
 # gcloud container clusters get-credentials <cluster_name> --zone <zone> --project <project_id>
 #
