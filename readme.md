@@ -94,7 +94,27 @@ _Diagram to be added once all phases are complete._
 
 ---
 
-### 🔧 Phase 6 — Observability (Prometheus + Grafana) _(next)_
+### ✅ Phase 6 — Observability (Prometheus + Grafana)
+- kube-prometheus-stack installed via Helm in `monitoring` namespace (Prometheus + Grafana + AlertManager + kube-state-metrics + node-exporter)
+- All resource requests tuned down for e2-small nodes (Prometheus: 256Mi, Grafana: 64Mi, AlertManager: 32Mi)
+- GCP uptime check provisioned via Terraform — pings `/health` every 60s from GCP infrastructure
+- Log-based metric for 5xx errors configured in Cloud Logging
+
+**Issues encountered:**
+- **`helm install` failed with "cannot reuse a name that is still in use"** — a previous partial install attempt left the Helm release registered. Running `helm install` again with the same release name fails even if the release is broken.
+  - Fix: use `helm upgrade --install` instead — idempotent, installs if missing and upgrades if already present.
+- **Terraform `google_logging_metric` failed with "Label descriptors must have corresponding label extractors"** — defined a `labels` block inside `metric_descriptor` without a matching `label_extractors` block that maps log fields to those labels. GCP requires both to be present together.
+  - Fix: removed the `labels` block entirely — a simple count of 5xx errors without label breakdown is sufficient and avoids the complexity.
+- **Prometheus pod stuck `Pending` — `Insufficient cpu, Insufficient memory`** — kube-prometheus-stack's default resource requests are sized for production clusters. Combined with GKE system DaemonSets (logging agent, kube-proxy, etc.) and existing workloads (Vault, FastAPI), both e2-small nodes were fully exhausted before Prometheus could schedule.
+  - Fix: reduced Prometheus requests to 50m CPU / 128Mi memory. Also explicitly set resource requests on the two Grafana sidecar containers (`k8s-sidecar`) which the chart leaves unbounded by default, causing them to consume headroom invisibly.
+- **Grafana liveness probe killing the container on startup** — the default liveness probe fires after 30s, but Grafana takes longer to boot on a resource-constrained node. The probe declared the container unhealthy and killed it repeatedly (`CrashLoopBackOff`).
+  - Fix: increased `livenessProbe.initialDelaySeconds` to 60s and `failureThreshold` to 6 to give Grafana enough time to start under load.
+- **Grafana OOMKilled repeatedly even after liveness probe fix** — Grafana 13 requires more than 128Mi to boot. The pod would start, briefly reach 2/3 containers, then get killed by the kernel for exceeding the memory limit before the liveness probe even fired.
+  - Fix: increased Grafana memory request to 128Mi and limit to 256Mi. Also increased sidecar container limits from 64Mi to 128Mi.
+- **Rolling update deadlock after force-deleting OOMKilled pod** — deleting the old Grafana pod caused its ReplicaSet controller to immediately create a replacement, while the new pod was still at 2/3. Both pods competed for the same resources, stalling the rollout. 
+  - Fix: waited for the new pod to reach 3/3 Ready, at which point the rolling update automatically terminated the old ReplicaSet's replacement pod.
+- **e2-small nodes fully exhausted — upgraded to e2-medium** — even with aggressively reduced resource requests, the combination of GKE system DaemonSets (fluentbit logging agent, kube-proxy, metadata server, pdcsi-node) consuming ~500 MB and significant CPU per node, plus the full workload stack (FastAPI × 2, Vault, Prometheus, Grafana, AlertManager, node-exporter × 2, kube-state-metrics), left both nodes with `Insufficient cpu` and `Insufficient memory` for pending pods. GKE system overhead on e2-small is simply too high for a multi-component stack.
+  - Fix: upgraded node pool from `e2-small` (2 GB RAM) to `e2-medium` (4 GB RAM) via Terraform. GKE performed a rolling node replacement with zero downtime. All monitoring pods scheduled and reached `Running` immediately after.
 ### Phase 7 — Final README + architecture diagram
 
 ## Setup

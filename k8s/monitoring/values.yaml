@@ -1,0 +1,91 @@
+# ── monitoring/values.yaml ────────────────────────────────────────────────────
+# Helm values for kube-prometheus-stack on e2-small nodes.
+# e2-small has 0.5 vCPU and 2 GB RAM. After GKE system overhead (~500 MB,
+# plus DaemonSets for logging/networking), roughly 1.5 GB per node is
+# available for workloads. Every request here is tuned to the minimum that
+# keeps the component functional.
+
+# ── Prometheus ────────────────────────────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    retention: 3d   # 3 days is enough for a demo; saves disk on 30 GB boot disks
+
+    resources:
+      requests:
+        cpu: "50m"      # reduced from 100m — Prometheus idles at very low CPU
+        memory: "128Mi" # reduced from 256Mi — adequate for a small cluster with few metrics
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+
+# ── Grafana ───────────────────────────────────────────────────────────────────
+grafana:
+  adminUser: admin
+  adminPassword: admin
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"  # increased from 64Mi — Grafana 13 OOMKilled at 128Mi limit
+    limits:
+      cpu: "200m"
+      memory: "256Mi"  # increased from 128Mi — Grafana 13 needs ~150-200Mi to boot
+
+  # The chart deploys two sidecar containers alongside Grafana to dynamically
+  # load dashboards and datasources from ConfigMaps. Their default resource
+  # requests are unset (unbounded), which blocks scheduling on a loaded node.
+  # Explicitly cap them here.
+  sidecar:
+    resources:
+      requests:
+        cpu: "10m"
+        memory: "32Mi"
+      limits:
+        cpu: "50m"
+        memory: "128Mi"  # increased from 64Mi to give sidecars room
+
+  # Grafana on a loaded node takes longer to start than the default probe allows.
+  # Increase the initial delay so the liveness probe doesn't kill it mid-startup.
+  livenessProbe:
+    initialDelaySeconds: 60   # was 30 — gives Grafana time to boot under resource pressure
+    timeoutSeconds: 5
+    periodSeconds: 10
+    failureThreshold: 6       # allow more consecutive failures before killing the pod
+
+  readinessProbe:
+    initialDelaySeconds: 30
+    timeoutSeconds: 3
+    periodSeconds: 10
+
+# ── AlertManager ─────────────────────────────────────────────────────────────
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: "10m"
+        memory: "32Mi"
+      limits:
+        cpu: "50m"
+        memory: "64Mi"
+
+# ── kube-state-metrics ────────────────────────────────────────────────────────
+# Exposes Kubernetes object state as metrics (pod status, replica counts, etc.)
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: "10m"
+      memory: "32Mi"
+    limits:
+      cpu: "50m"
+      memory: "64Mi"
+
+# ── node-exporter ─────────────────────────────────────────────────────────────
+# DaemonSet — one pod per node — exposes host CPU, memory, disk, network metrics.
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: "10m"    # reduced from 20m
+      memory: "32Mi"
+    limits:
+      cpu: "50m"
+      memory: "64Mi"

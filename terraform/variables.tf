@@ -35,11 +35,12 @@ variable "node_count" {
 variable "machine_type" {
   description = "GCE machine type for GKE worker nodes."
   type        = string
-  # e2-small: 0.5 vCPU (burstable), 2 GB RAM — ~$12/month per node.
-  # GKE system overhead uses ~500 MB per node, leaving ~3 GB total across
-  # both nodes for our workloads. Enough for FastAPI + Vault + Prometheus + Grafana
-  # as long as we set resource limits in Phase 6.
-  default = "e2-small"
+  # e2-medium: 1 vCPU (burstable), 4 GB RAM — ~$25/month per node.
+  # Upgraded from e2-small after the full stack (FastAPI + Vault + Prometheus +
+  # Grafana + AlertManager + node-exporter) exhausted both nodes' allocatable
+  # CPU and memory. GKE system DaemonSets (fluentbit, kube-proxy, metadata server)
+  # consume ~500 MB and significant CPU that wasn't accounted for at e2-small size.
+  default = "e2-medium"
 }
 
 variable "disk_size_gb" {
