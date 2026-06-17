@@ -1,126 +1,294 @@
 # GCP GKE Pipeline
 
-An end-to-end DevOps pipeline on Google Cloud Platform. Provisions a production-style GKE cluster with Terraform, deploys a containerized application through a GitHub Actions CI/CD pipeline, manages secrets with HashiCorp Vault, and exposes metrics via Prometheus and Grafana.
+An end-to-end DevOps pipeline on Google Cloud Platform. A containerized FastAPI service is built and tested through GitHub Actions CI/CD, published to Google Artifact Registry, and deployed to a GKE Kubernetes cluster provisioned entirely with Terraform. Secrets are managed by HashiCorp Vault running inside the cluster, and the full stack is observable through Prometheus, Grafana, and GCP Cloud Monitoring.
 
-> **Status:** In progress — actively building phase by phase.
-
-## Planned Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Infrastructure | Terraform, GCP (GKE, VPC, Artifact Registry, IAM) |
-| Application | Python / FastAPI |
-| Containers | Docker, Google Artifact Registry |
-| Orchestration | Kubernetes (GKE) |
-| CI/CD | GitHub Actions |
-| Secrets | HashiCorp Vault (Helm) |
-| Observability | Cloud Monitoring, Prometheus, Grafana (Helm) |
+---
 
 ## Architecture
 
-_Diagram to be added once all phases are complete._
+```mermaid
+graph TD
+    Dev([Developer]) -->|git push to master| GH[GitHub Repository]
 
-## Phases
+    subgraph CICD ["GitHub Actions CI/CD"]
+        GH --> Auth[Authenticate via\nWorkload Identity Federation]
+        Auth --> Build[Build and tag Docker image\nwith git SHA]
+        Build --> Push[Push to\nArtifact Registry]
+        Push --> Deploy[kubectl apply\nto GKE]
+    end
 
-### ✅ Phase 0 — Local tooling & GCP project setup
-- Installed gcloud CLI, Terraform, Helm, kubectl on Windows 11
-- Authenticated with `gcloud auth login` and `gcloud auth application-default login`
-- Created GCP project `gcp-gke-pipeline-ehab`
-- Enabled APIs: Compute Engine, GKE, Artifact Registry
-- Configured Application Default Credentials for Terraform
+    subgraph GCP ["Google Cloud Platform"]
+        subgraph Network ["VPC — gke-vpc"]
+            subgraph GKE ["GKE Cluster — gke-pipeline-cluster"]
+                subgraph Default ["namespace: default"]
+                    APP[FastAPI Pods x2] -->|reads secret| VAULT[HashiCorp Vault]
+                    SVC[LoadBalancer Service] --> APP
+                end
+                subgraph Mon ["namespace: monitoring"]
+                    PROM[Prometheus] --- GRAF[Grafana]
+                    NE[node-exporter x2] --> PROM
+                    KSM[kube-state-metrics] --> PROM
+                end
+            end
+        end
+        AR[Artifact Registry] -->|image pull| APP
+        CM[Cloud Monitoring\nUptime Check] -.->|pings /health| SVC
+        CL[Cloud Logging\n5xx metric] -.->|streams logs| GKE
+    end
 
-**Issues encountered:**
-- **`Permission denied` on gcloud credential file** — gcloud was first run as Administrator, which created `adc.json` owned by the Admin account. Regular user sessions couldn't write to it, breaking all gcloud commands.
-  - Fix: `takeown /f ... /r` to take ownership of the gcloud config directory, then `icacls` to grant the regular user full access, then re-authenticated with `gcloud auth login`.
-- **`gke-gcloud-auth-plugin` missing** — kubectl v1.26+ requires this separate plugin to authenticate with GKE; it is not bundled with the gcloud CLI by default.
-  - Fix: `gcloud components install gke-gcloud-auth-plugin` and set `USE_GKE_GCLOUD_AUTH_PLUGIN=True` in the shell session.
-
----
-
-### ✅ Phase 1 — Terraform: VPC + GKE cluster
-- Custom VPC (`gke-vpc`) with a dedicated subnet and secondary IP ranges for pods and services (VPC-native networking)
-- GKE zonal cluster (`gke-pipeline-cluster`, `us-central1-a`) with 2x `e2-small` nodes running Kubernetes v1.35.5
-- Dedicated least-privilege service account (`gke-node-sa`) with only 4 IAM roles: Artifact Registry reader, log writer, metric writer, monitoring viewer
-- Workload Identity enabled on the cluster and node pool (no JSON keys needed for pod-level GCP auth)
-- `terraform apply` — 9 resources provisioned, 0 errors
-- kubectl connected, both nodes `Ready`
-
-**Issues encountered:** None.
-
----
-
-### ✅ Phase 2 — FastAPI app + Docker + Artifact Registry
-- FastAPI app with 4 endpoints: `/` (service info), `/health` (k8s probe target), `/items` (sample data), `/secret` (Vault placeholder)
-- Dockerfile using `python:3.12-slim` — dependencies copied before source code to maximize Docker layer caching
-- Artifact Registry repository (`app-repo`) provisioned via Terraform
-- Image built and pushed: `us-central1-docker.pkg.dev/gcp-gke-pipeline-ehab/app-repo/fastapi-app:latest`
-
-**Issues encountered:** None.
+    SVC -->|public IP| Browser([Browser / API Client])
+    Deploy -->|rolling update| GKE
+```
 
 ---
 
-### ✅ Phase 3 — Kubernetes manifests + deploy to GKE
-- `Deployment` with 2 replicas, resource requests/limits sized for e2-small nodes (50m CPU / 128Mi RAM per pod)
-- Liveness probe on `/health` — restarts the pod if the app deadlocks
-- Readiness probe on `/health` — removes the pod from load balancer rotation until it's ready
-- `Service` of type `LoadBalancer` — GCP external load balancer on port 80 → container port 8000
-- App live and responding: `GET /health → {"status": "healthy"}`
+## Stack
 
-**Issues encountered:** None.
-
----
-
-### ✅ Phase 4 — GitHub Actions CI/CD
-- Workload Identity Federation (WIF) configured — GitHub Actions authenticates to GCP via short-lived OIDC tokens, no JSON keys stored in GitHub Secrets
-- Dedicated CI/CD service account (`github-actions-sa`) with Artifact Registry writer + GKE developer roles
-- Pipeline: checkout → WIF auth → build image (tagged with git SHA) → push to Artifact Registry → rolling deploy to GKE
-
-**Issues encountered:**
-- **Rolling update failed with `Insufficient cpu`** — Kubernetes default rolling update creates a new pod before terminating an old one (`maxSurge: 1`). With 2 replicas this temporarily requires 3 pods, but e2-small nodes didn't have enough free CPU to schedule the 3rd pod.
-  - Fix: Set `maxSurge: 0, maxUnavailable: 1` in the Deployment strategy so old pods are terminated first. Also reduced CPU requests from 100m to 50m (FastAPI is lightweight and the headroom is needed for Vault and Prometheus in later phases).
-- **Strategy change not applied via `kubectl set image`** — the pipeline was using `kubectl set image` to update only the image tag, which left all other manifest changes (including the `maxSurge: 0` fix) unapplied on the live cluster.
-  - Fix: Replaced `kubectl set image` with `sed` to substitute the image tag in `deployment.yaml` followed by `kubectl apply -f k8s/` — this ensures every manifest change is applied on every deploy, not just the image tag.
-- **Node.js 20 deprecation warning in GitHub Actions** — actions (`checkout@v4`, `google-github-actions/auth@v2`, etc.) internally target Node.js 20, which GitHub has deprecated on runners. GitHub automatically forces them to run on Node.js 24. Non-breaking warning only — no action required.
+| Layer | Technology |
+|---|---|
+| Infrastructure | Terraform · GCP VPC · GKE · Artifact Registry · IAM |
+| Application | Python 3.12 · FastAPI · Uvicorn |
+| Containers | Docker · Google Artifact Registry |
+| Orchestration | Kubernetes (GKE Standard, zonal) |
+| CI/CD | GitHub Actions · Workload Identity Federation |
+| Secrets | HashiCorp Vault (Helm, dev mode) |
+| Observability | Prometheus · Grafana · AlertManager · GCP Cloud Monitoring |
+| IaC | Terraform (Google provider v5) |
 
 ---
 
-### ✅ Phase 5 — HashiCorp Vault via Helm
-- Vault deployed in dev mode via Helm into a dedicated `vault` namespace (auto-unsealed, in-memory storage — correct scope for a portfolio project; production would use Raft storage + GCP KMS auto-unseal)
-- Secret written: `vault kv put secret/app db_password=supersecret`
-- FastAPI `/secret` endpoint updated to read `db_password` from Vault KV v2 engine via the `hvac` Python client
-- `VAULT_ADDR` and `VAULT_TOKEN` injected as env vars in the Deployment manifest; app resolves Vault via Kubernetes internal DNS (`vault.vault.svc.cluster.local`)
+## Project Structure
 
-**Issues encountered:** None.
+```
+.
+├── app/
+│   ├── main.py              # FastAPI application
+│   └── requirements.txt
+├── k8s/
+│   ├── deployment.yaml      # Kubernetes Deployment (2 replicas)
+│   ├── service.yaml         # LoadBalancer Service
+│   ├── vault/
+│   │   └── values.yaml      # Helm values for HashiCorp Vault
+│   └── monitoring/
+│       └── values.yaml      # Helm values for kube-prometheus-stack
+├── terraform/
+│   ├── main.tf              # Provider configuration
+│   ├── variables.tf         # Input variables
+│   ├── network.tf           # VPC + subnet
+│   ├── gke.tf               # GKE cluster + node pool
+│   ├── iam.tf               # Service accounts + IAM roles
+│   ├── artifact_registry.tf # Artifact Registry repository
+│   ├── cicd.tf              # Workload Identity Federation + CI/CD SA
+│   ├── monitoring.tf        # GCP uptime check + log-based metric
+│   └── outputs.tf
+├── .github/workflows/
+│   └── deploy.yml           # CI/CD pipeline
+└── Dockerfile
+```
 
 ---
 
-### ✅ Phase 6 — Observability (Prometheus + Grafana)
-- kube-prometheus-stack installed via Helm in `monitoring` namespace (Prometheus + Grafana + AlertManager + kube-state-metrics + node-exporter)
-- All resource requests tuned down for e2-small nodes (Prometheus: 256Mi, Grafana: 64Mi, AlertManager: 32Mi)
-- GCP uptime check provisioned via Terraform — pings `/health` every 60s from GCP infrastructure
-- Log-based metric for 5xx errors configured in Cloud Logging
+## Prerequisites
 
-**Issues encountered:**
-- **`helm install` failed with "cannot reuse a name that is still in use"** — a previous partial install attempt left the Helm release registered. Running `helm install` again with the same release name fails even if the release is broken.
-  - Fix: use `helm upgrade --install` instead — idempotent, installs if missing and upgrades if already present.
-- **Terraform `google_logging_metric` failed with "Label descriptors must have corresponding label extractors"** — defined a `labels` block inside `metric_descriptor` without a matching `label_extractors` block that maps log fields to those labels. GCP requires both to be present together.
-  - Fix: removed the `labels` block entirely — a simple count of 5xx errors without label breakdown is sufficient and avoids the complexity.
-- **Prometheus pod stuck `Pending` — `Insufficient cpu, Insufficient memory`** — kube-prometheus-stack's default resource requests are sized for production clusters. Combined with GKE system DaemonSets (logging agent, kube-proxy, etc.) and existing workloads (Vault, FastAPI), both e2-small nodes were fully exhausted before Prometheus could schedule.
-  - Fix: reduced Prometheus requests to 50m CPU / 128Mi memory. Also explicitly set resource requests on the two Grafana sidecar containers (`k8s-sidecar`) which the chart leaves unbounded by default, causing them to consume headroom invisibly.
-- **Grafana liveness probe killing the container on startup** — the default liveness probe fires after 30s, but Grafana takes longer to boot on a resource-constrained node. The probe declared the container unhealthy and killed it repeatedly (`CrashLoopBackOff`).
-  - Fix: increased `livenessProbe.initialDelaySeconds` to 60s and `failureThreshold` to 6 to give Grafana enough time to start under load.
-- **Grafana OOMKilled repeatedly even after liveness probe fix** — Grafana 13 requires more than 128Mi to boot. The pod would start, briefly reach 2/3 containers, then get killed by the kernel for exceeding the memory limit before the liveness probe even fired.
-  - Fix: increased Grafana memory request to 128Mi and limit to 256Mi. Also increased sidecar container limits from 64Mi to 128Mi.
-- **Rolling update deadlock after force-deleting OOMKilled pod** — deleting the old Grafana pod caused its ReplicaSet controller to immediately create a replacement, while the new pod was still at 2/3. Both pods competed for the same resources, stalling the rollout. 
-  - Fix: waited for the new pod to reach 3/3 Ready, at which point the rolling update automatically terminated the old ReplicaSet's replacement pod.
-- **e2-small nodes fully exhausted — upgraded to e2-medium** — even with aggressively reduced resource requests, the combination of GKE system DaemonSets (fluentbit logging agent, kube-proxy, metadata server, pdcsi-node) consuming ~500 MB and significant CPU per node, plus the full workload stack (FastAPI × 2, Vault, Prometheus, Grafana, AlertManager, node-exporter × 2, kube-state-metrics), left both nodes with `Insufficient cpu` and `Insufficient memory` for pending pods. GKE system overhead on e2-small is simply too high for a multi-component stack.
-  - Fix: upgraded node pool from `e2-small` (2 GB RAM) to `e2-medium` (4 GB RAM) via Terraform. GKE performed a rolling node replacement with zero downtime. All monitoring pods scheduled and reached `Running` immediately after.
-### Phase 7 — Final README + architecture diagram
+- GCP account with a project and billing enabled
+- Tools: `gcloud` CLI, `terraform` >= 1.5, `kubectl`, `helm`, `docker`
+- A GitHub repository with Actions enabled
+
+---
 
 ## Setup
 
-_Full setup instructions will be written in Phase 7 once the project is complete._
+### 1. Authenticate
 
-## Cost Note
+```bash
+gcloud auth login
+gcloud auth application-default login
+gcloud config set project YOUR_PROJECT_ID
+gcloud auth application-default set-quota-project YOUR_PROJECT_ID
+```
 
-The GKE cluster (2x e2-small nodes) runs against GCP free trial credit (~$24/month for nodes + ~$2.40/month for disks). The LoadBalancer Service adds ~$18/month while running. Run `terraform destroy` after testing to avoid unnecessary charges.
+### 2. Enable GCP APIs
+
+```bash
+gcloud services enable compute.googleapis.com container.googleapis.com artifactregistry.googleapis.com
+```
+
+### 3. Provision infrastructure
+
+```bash
+cd terraform
+terraform init
+terraform apply
+```
+
+Provisions: VPC, GKE cluster (2× e2-medium nodes), Artifact Registry repo, least-privilege service accounts, and Workload Identity Federation for GitHub Actions.
+
+### 4. Connect kubectl
+
+```bash
+gcloud container clusters get-credentials gke-pipeline-cluster \
+  --zone us-central1-a --project YOUR_PROJECT_ID
+```
+
+### 5. Build and push the app image
+
+```bash
+gcloud auth configure-docker us-central1-docker.pkg.dev
+docker build -t us-central1-docker.pkg.dev/YOUR_PROJECT_ID/app-repo/fastapi-app:latest .
+docker push us-central1-docker.pkg.dev/YOUR_PROJECT_ID/app-repo/fastapi-app:latest
+```
+
+### 6. Deploy the application
+
+```bash
+kubectl apply -f k8s/
+kubectl get svc fastapi-app-svc   # wait for EXTERNAL-IP
+```
+
+### 7. Deploy HashiCorp Vault
+
+```bash
+helm repo add hashicorp https://helm.releases.hashicorp.com && helm repo update
+helm install vault hashicorp/vault -f k8s/vault/values.yaml -n vault --create-namespace
+kubectl exec -n vault vault-0 -- vault kv put secret/app db_password=supersecret
+```
+
+### 8. Deploy Prometheus + Grafana
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts && helm repo update
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  -f k8s/monitoring/values.yaml -n monitoring --create-namespace
+kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
+# open http://localhost:3000 — admin / admin
+```
+
+### 9. Configure GitHub Actions
+
+Add two repository secrets under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|---|---|
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | output of `terraform output workload_identity_provider` |
+| `GCP_SERVICE_ACCOUNT` | output of `terraform output cicd_service_account_email` |
+
+Every push to `master` now triggers the full CI/CD pipeline.
+
+---
+
+## API Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /` | Service info |
+| `GET /health` | Health check — used by Kubernetes liveness and readiness probes |
+| `GET /items` | Sample data endpoint |
+| `GET /secret` | Reads `db_password` live from HashiCorp Vault KV v2 |
+| `GET /docs` | Auto-generated Swagger UI (FastAPI built-in) |
+
+---
+
+## CI/CD Pipeline
+
+Every push to `master` triggers the following steps:
+
+1. **Authenticate** — GitHub's OIDC provider issues a short-lived token; GCP Workload Identity Federation exchanges it for a scoped GCP access token. No static credentials stored anywhere.
+2. **Build** — Docker image built and tagged with the exact git commit SHA for full traceability and easy rollbacks.
+3. **Push** — Image pushed to Artifact Registry under both `:SHA` and `:latest` tags.
+4. **Deploy** — `sed` substitutes the SHA into `deployment.yaml`, then `kubectl apply` applies all manifests. Rolling update (`maxSurge: 0, maxUnavailable: 1`) keeps the app live during deployment.
+5. **Verify** — `kubectl rollout status` blocks until all pods pass readiness probes, failing the pipeline if any pod doesn't start cleanly.
+
+---
+
+## Secrets Management
+
+Vault runs inside the cluster in dev mode (single pod, in-memory, auto-unsealed). The FastAPI `/secret` endpoint reads from the KV v2 engine at `secret/app` using the `hvac` Python client. Vault is resolved through Kubernetes internal DNS at `vault.vault.svc.cluster.local`.
+
+**Dev mode trade-offs:** No persistence (secrets lost on pod restart), no HA, no TLS. Intentional for a portfolio project — the goal is demonstrating the secret injection pattern, not operating Vault as production infrastructure. A production deployment would use integrated Raft storage, GCP KMS auto-unseal, and Vault Agent for dynamic short-lived token injection.
+
+---
+
+## Observability
+
+| Component | Purpose |
+|---|---|
+| Prometheus | Scrapes metrics from all cluster components every 15s |
+| Grafana | Pre-built dashboards: cluster resources, node metrics, pod status |
+| AlertManager | Alert routing (bundled with kube-prometheus-stack) |
+| node-exporter | Host-level metrics (CPU, memory, disk, network) per node |
+| kube-state-metrics | Kubernetes object state (replica counts, pod phases, etc.) |
+| GCP Cloud Monitoring | Uptime check pinging `/health` every 60s |
+| GCP Cloud Logging | Log-based metric counting HTTP 5xx errors from FastAPI pods |
+
+---
+
+## Design Decisions
+
+**Workload Identity Federation over JSON keys**
+GitHub Actions authenticates via short-lived OIDC tokens instead of a static JSON service account key stored in GitHub Secrets. WIF tokens expire at the end of each job, require no rotation, and cannot be leaked through log exposure. The binding is scoped to this specific GitHub repository — tokens from any other repo are rejected at the GCP level.
+
+**VPC-native networking**
+The GKE cluster uses alias IP ranges with dedicated secondary CIDR blocks for pods and services. This enables direct pod-to-pod routing without NAT, is required for Workload Identity at the pod level, and avoids the 250-route limit that affects routes-based GKE clusters at scale.
+
+**Two least-privilege service accounts**
+`gke-node-sa` (attached to nodes) holds only four roles: Artifact Registry reader, log writer, metric writer, monitoring viewer. `github-actions-sa` (CI/CD) holds only Artifact Registry writer and GKE developer. The Compute Engine default SA — which has project-level Editor access — is never used. A compromised node or pipeline token has the minimum possible blast radius.
+
+**Rolling update strategy: `maxSurge: 0, maxUnavailable: 1`**
+The Kubernetes default (`maxSurge: 1`) creates a new pod before terminating an old one, temporarily requiring capacity for N+1 pods. On a two-node cluster this caused new pods to stay `Pending` indefinitely due to insufficient CPU. Setting `maxSurge: 0` terminates one pod first, freeing its resources before the replacement starts. The app briefly runs at N-1 replicas, which is acceptable for a demo environment.
+
+**Zonal over regional GKE cluster**
+A regional cluster runs three control planes across three zones, costing ~$72/month in cluster management fees alone. A zonal cluster is free. For a portfolio project that doesn't require multi-zone availability, zonal is the correct default. The first change in a production context would be to regional.
+
+---
+
+## Cost Estimate
+
+| Resource | Cost |
+|---|---|
+| GKE cluster management (zonal) | Free |
+| 2× e2-medium nodes | ~$50/month |
+| 30 GB boot disks × 2 | ~$2.40/month |
+| Artifact Registry | <$0.10/month |
+| LoadBalancer | ~$18/month while active |
+| Cloud Monitoring / Logging | Free (under quota) |
+| **Total** | **~$70/month** |
+
+> Run `terraform destroy` when done to avoid unnecessary charges.
+
+---
+
+## Teardown
+
+```bash
+helm uninstall kube-prometheus-stack -n monitoring
+helm uninstall vault -n vault
+cd terraform && terraform destroy
+```
+
+---
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [`docs/application.md`](docs/application.md) | API endpoints, example responses, container image details, Kubernetes configuration |
+| [`docs/build-journal.md`](docs/build-journal.md) | Phase-by-phase build log — what was built, commands run, and key decisions made |
+| [`docs/troubleshooting.md`](docs/troubleshooting.md) | 11 issues with symptoms, root causes, debugging commands, and fixes |
+| [`docs/screenshots/`](docs/screenshots/README.md) | Screenshots of the running system — Grafana, Swagger UI, GCP Console, GitHub Actions |
+
+---
+
+## Troubleshooting
+
+A full log of every issue encountered during this build — symptoms, root causes, debugging commands, and fixes — is in [`docs/troubleshooting.md`](docs/troubleshooting.md).
+
+Issues covered:
+- gcloud `Permission denied` on credential files (Windows Administrator ownership)
+- `gke-gcloud-auth-plugin` missing from kubectl
+- Rolling update `Insufficient cpu` due to `maxSurge: 1` default
+- `kubectl set image` not applying manifest strategy changes
+- Helm `cannot reuse a name that is still in use`
+- Terraform log-based metric label descriptor mismatch
+- Prometheus/Grafana scheduling failures on e2-small nodes
+- Grafana OOMKill and liveness probe startup deadlock
+- Node pool upgrade from e2-small to e2-medium via Terraform
