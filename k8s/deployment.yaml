@@ -13,6 +13,18 @@ metadata:
 spec:
   replicas: 2             # run 2 pods so the app survives a single node failure
 
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # maxSurge: 0 — do NOT create a new pod before terminating an old one.
+      # Default is 1 (create extra pod first), which requires 3 pods worth of
+      # CPU during the transition — too much for e2-small nodes.
+      maxSurge: 0
+      # maxUnavailable: 1 — allow one pod to be down during the update.
+      # This means: kill one old pod → start one new pod → kill other old pod → start last new pod.
+      # App stays up on 1 replica during the brief transition window.
+      maxUnavailable: 1
+
   # selector tells the Deployment which pods it "owns" and should manage
   selector:
     matchLabels:
@@ -42,10 +54,10 @@ spec:
           # Kept small to fit comfortably on e2-small nodes (2 GB RAM each).
           resources:
             requests:
-              cpu: "100m"       # 100 millicores = 0.1 vCPU
+              cpu: "50m"        # 50 millicores = 0.05 vCPU — FastAPI is lightweight
               memory: "128Mi"   # 128 mebibytes
             limits:
-              cpu: "200m"       # burst up to 0.2 vCPU
+              cpu: "200m"       # burst up to 0.2 vCPU when needed
               memory: "256Mi"   # hard cap — OOMKill if exceeded
 
           # Liveness probe: if this fails repeatedly, Kubernetes restarts the pod.

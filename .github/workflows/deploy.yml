@@ -93,4 +93,4 @@ jobs:
 
           # Wait for the rollout to finish before marking the job as passed.
           # If a pod fails to start, this command exits non-zero and fails the job.
-          kubectl rollout status deployment/fastapi-app --timeout=120s
+          kubectl rollout status deployment/fastapi-app --timeout=300s
